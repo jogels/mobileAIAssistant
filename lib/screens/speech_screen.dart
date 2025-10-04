@@ -541,7 +541,7 @@ class _SpeechScreenState extends State<SpeechScreen> {
                 divisions: 15,
                 onChanged: (value) => speechController.updateSpeechPitch(value),
               ),
-              trailing: Text("${speechController.speechPitch.value.toStringAsFixed(1)}"),
+              trailing: Text(speechController.speechPitch.value.toStringAsFixed(1)),
             )),
           ],
         ),

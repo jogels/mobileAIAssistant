@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'controllers/chat_controller.dart';
+import 'controllers/ready_player_me_controller.dart';
 import 'screens/chat_screen.dart';
 
 void main() {
@@ -12,8 +13,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Initialize ChatController
+    // Initialize Controllers
     Get.put(ChatController());
+    Get.put(ReadyPlayerMeController());
 
     return GetMaterialApp(
       title: 'Erico GPT',

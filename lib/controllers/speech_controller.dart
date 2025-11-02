@@ -5,11 +5,15 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/speech_message.dart';
+import '../api/speech_api_service.dart';
+import '../api/websocket_service.dart';
 
 class SpeechController extends GetxController {
   // Speech to Text
   final SpeechToText _speechToText = SpeechToText();
   final FlutterTts _flutterTts = FlutterTts();
+  final SpeechApiService _apiService = SpeechApiService();
+  final WebSocketService _wsService = WebSocketService();
   
   // Observable variables
   var isListening = false.obs;
@@ -22,22 +26,75 @@ class SpeechController extends GetxController {
   var retryCount = 0.obs;
   var maxRetries = 3.obs;
   var isRetrying = false.obs;
+  var isLoading = false.obs; // Loading state untuk API call
+  var useWebSocket = true.obs; // Opsi untuk menggunakan WebSocket atau HTTP
+  var isWsConnected = false.obs; // Status koneksi WebSocket
   
   // Audio settings
   var speechRate = 0.5.obs;
   var speechVolume = 1.0.obs;
   var speechPitch = 1.0.obs;
 
+  StreamSubscription? _wsMessageSubscription;
+  StreamSubscription? _wsConnectionSubscription;
+
   @override
   void onInit() {
     super.onInit();
     _initializeSpeech();
+    _initializeWebSocket();
   }
 
   @override
   void onClose() {
     _flutterTts.stop();
+    _wsMessageSubscription?.cancel();
+    _wsConnectionSubscription?.cancel();
+    _wsService.dispose();
     super.onClose();
+  }
+
+  /// Initialize WebSocket connection
+  Future<void> _initializeWebSocket() async {
+    try {
+      // Listen untuk koneksi WebSocket
+      _wsConnectionSubscription = _wsService.connectionStream.listen((connected) {
+        isWsConnected.value = connected;
+        if (!connected) {
+          Get.snackbar(
+            'WebSocket',
+            'Koneksi WebSocket terputus. Menggunakan HTTP API.',
+            snackPosition: SnackPosition.BOTTOM,
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.orange.shade100,
+            colorText: Colors.orange.shade800,
+          );
+        }
+      });
+
+      // Listen untuk pesan dari WebSocket
+      _wsMessageSubscription = _wsService.messageStream.listen((response) {
+        // Ambil payload dari response
+        final aiResponse = response.payload;
+        _addAIMessage(aiResponse);
+        isLoading.value = false;
+      });
+
+      // Connect ke WebSocket
+      await _wsService.connect();
+      print('WebSocket initialized');
+    } catch (e) {
+      print('Error initializing WebSocket: $e');
+      useWebSocket.value = false; // Fallback ke HTTP jika WebSocket gagal
+      Get.snackbar(
+        'WebSocket',
+        'Gagal terhubung ke WebSocket. Menggunakan HTTP API.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+        backgroundColor: Colors.orange.shade100,
+        colorText: Colors.orange.shade800,
+      );
+    }
   }
 
   Future<void> _initializeSpeech() async {
@@ -71,23 +128,19 @@ class SpeechController extends GetxController {
           
           // Handle different types of errors
           String errorMessage = 'Terjadi kesalahan speech recognition';
-          bool shouldRetry = false;
           
           switch (error.errorMsg) {
             case 'error_network':
-              errorMessage = 'Koneksi internet bermasalah. Mencoba lagi...';
-              shouldRetry = true;
-              // Jika sudah retry beberapa kali, tampilkan fallback
+              errorMessage = 'Koneksi internet bermasalah. Periksa koneksi internet Anda.';
+              // Tampilkan network error handler jika sudah beberapa kali
               if (retryCount.value >= 2) {
                 Future.delayed(const Duration(seconds: 1), () {
                   handleNetworkError();
                 });
-                shouldRetry = false; // Stop retry setelah 2 kali
               }
               break;
             case 'error_busy':
-              errorMessage = 'Speech recognition sedang sibuk. Mencoba lagi...';
-              shouldRetry = true;
+              errorMessage = 'Speech recognition sedang sibuk. Silakan coba lagi.';
               break;
             case 'error_no_match':
               errorMessage = 'Tidak ada suara yang terdeteksi. Coba berbicara lebih jelas.';
@@ -97,19 +150,15 @@ class SpeechController extends GetxController {
               break;
             case 'error_speech_timeout':
               errorMessage = 'Timeout speech recognition. Coba berbicara lebih jelas.';
-              shouldRetry = true; // Retry untuk timeout
               break;
             case 'error_client':
               errorMessage = 'Masalah dengan klien speech recognition.';
-              shouldRetry = true;
               break;
             case 'error_server':
-              errorMessage = 'Server speech recognition bermasalah. Mencoba lagi...';
-              shouldRetry = true;
+              errorMessage = 'Server speech recognition bermasalah. Silakan coba lagi.';
               break;
             case 'error_7':
               errorMessage = 'Masalah dengan audio input. Periksa mikrofon dan coba lagi.';
-              shouldRetry = true;
               break;
             default:
               errorMessage = 'Terjadi kesalahan: ${error.errorMsg}';
@@ -120,24 +169,18 @@ class SpeechController extends GetxController {
             errorMessage,
             snackPosition: SnackPosition.BOTTOM,
             duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red.shade100,
+            colorText: Colors.red.shade800,
           );
           
-          // Auto retry untuk error yang bisa di-retry
-          if (shouldRetry) {
-            Future.delayed(const Duration(seconds: 2), () {
-              retrySpeechRecognition();
-            });
-          } else {
-            // Untuk error yang tidak bisa di-retry, reset counter
-            retryCount.value = 0;
-            
-            // Jika error timeout, langsung gunakan simulasi
-            if (error.errorMsg == 'error_speech_timeout') {
-              Future.delayed(const Duration(seconds: 1), () {
-                simulateSpeechRecognition();
-              });
-            }
-          }
+          // DISABLE AUTO-RETRY - User harus klik button sendiri untuk retry
+          // Reset counter dan state agar siap untuk rekam berikutnya
+          retryCount.value = 0;
+          isListening.value = false;
+          isRetrying.value = false;
+          
+          // Jangan auto-retry atau auto-simulasi
+          // Biarkan user yang memutuskan kapan akan rekam lagi
         },
         debugLogging: true, // Enable debug logging
       );
@@ -205,11 +248,27 @@ class SpeechController extends GetxController {
     // }
 
     try {
+      // Reset state sebelum mulai listening baru
       recognizedText.value = '';
+      isListening.value = false; // Reset state
       
-      // Stop any existing listening first
-      await _speechToText.stop();
-      await Future.delayed(const Duration(milliseconds: 200));
+      // Stop dan cancel any existing listening first
+      try {
+        await _speechToText.stop();
+      } catch (e) {
+        print('Warning: Error stopping previous listening: $e');
+        // Continue anyway, mungkin tidak ada listening aktif
+      }
+      
+      try {
+        await _speechToText.cancel();
+      } catch (e) {
+        print('Warning: Error canceling previous listening: $e');
+        // Continue anyway
+      }
+      
+      // Tunggu lebih lama untuk memastikan state benar-benar reset
+      await Future.delayed(const Duration(milliseconds: 300));
       
       // Cek ketersediaan speech recognition
       bool available = await _speechToText.initialize();
@@ -243,6 +302,9 @@ class SpeechController extends GetxController {
       }
 
 
+      // Set listening state sebelum memulai
+      isListening.value = true;
+      
       await _speechToText.listen(
         onResult: (result) {
           recognizedText.value = result.recognizedWords;
@@ -250,10 +312,15 @@ class SpeechController extends GetxController {
           print('Final result: ${result.finalResult}');
           print('Confidence: ${result.confidence}');
           
-          // Jika ini hasil final, langsung proses
-          if (result.finalResult) {
-            print('Final speech result: ${result.recognizedWords}');
+          // Simpan text terakhir yang terdeteksi
+          if (result.recognizedWords.isNotEmpty) {
+            recognizedText.value = result.recognizedWords;
           }
+          
+          // Jika ini hasil final, langsung proses (optional - bisa diaktifkan jika ingin auto-process)
+          // if (result.finalResult) {
+          //   print('Final speech result: ${result.recognizedWords}');
+          // }
         },
         localeId: 'id_ID', // Gunakan bahasa Indonesia
         listenFor: const Duration(seconds: 30), // Durasi sangat lama untuk hold button
@@ -266,45 +333,85 @@ class SpeechController extends GetxController {
           print('Sound level: $level');
         },
       );
+      
+      print('✅ Speech recognition started successfully');
     } catch (e) {
       print('Error starting listening: $e');
       isListening.value = false;
       
-      // Jika error, coba lagi atau beri feedback
+      // Jika error, beri feedback dan reset state
       Get.snackbar(
         'Error',
-        'Gagal memulai listening. Coba lagi atau periksa izin mikrofon.',
+        'Gagal memulai listening. Silakan coba lagi.',
         snackPosition: SnackPosition.BOTTOM,
         duration: const Duration(seconds: 3),
+        backgroundColor: Colors.red.shade100,
+        colorText: Colors.red.shade800,
       );
       
-      // Coba retry jika belum mencapai max retry
-      if (retryCount.value < maxRetries.value) {
-        Future.delayed(const Duration(seconds: 2), () {
-          retrySpeechRecognition();
-        });
-      }
+      // DISABLE AUTO-RETRY - User harus klik button sendiri untuk retry
+      // Reset counter agar siap untuk percobaan berikutnya
+      retryCount.value = 0;
+      isRetrying.value = false;
     }
   }
 
   Future<void> stopListening() async {
     try {
-      await _speechToText.stop();
+      // Simpan text yang terdeteksi sebelum stop (untuk memastikan kita dapat text terakhir)
+      final detectedText = recognizedText.value;
+      
+      // Stop listening
+      if (isListening.value) {
+        try {
+          await _speechToText.stop();
+          print('✅ Speech recognition stopped');
+        } catch (e) {
+          print('⚠️ Error stopping speech recognition: $e');
+          // Try cancel as fallback
+          try {
+            await _speechToText.cancel();
+          } catch (e2) {
+            print('⚠️ Error canceling speech recognition: $e2');
+          }
+        }
+      }
+      
+      // Reset state
       isListening.value = false;
       
-      // Tunggu sebentar untuk memastikan speech recognition selesai
-      await Future.delayed(const Duration(milliseconds: 1000));
+      // Tunggu sebentar untuk memastikan speech recognition selesai dan mendapatkan final result
+      await Future.delayed(const Duration(milliseconds: 1500));
       
-      if (recognizedText.value.isNotEmpty && recognizedText.value.trim().length > 1) {
-        print('Processing recognized text: ${recognizedText.value}');
-        _addUserMessage(recognizedText.value);
-        _processUserInput(recognizedText.value);
-        recognizedText.value = ''; // Clear setelah diproses
+      // Gunakan text terakhir yang tersimpan atau yang ada di recognizedText
+      final finalText = recognizedText.value.isNotEmpty 
+          ? recognizedText.value 
+          : detectedText;
+      
+      print('Final text to process: "$finalText"');
+      
+      if (finalText.isNotEmpty && finalText.trim().length > 1) {
+        final textToProcess = finalText.trim();
+        print('Processing recognized text: "$textToProcess"');
+        
+        // Tambahkan pesan user
+        _addUserMessage(textToProcess);
+        
+        // Proses dan kirim ke API/WebSocket
+        await _processUserInput(textToProcess);
+        
+        // Clear setelah diproses
+        recognizedText.value = '';
+        
+        // Reset retry count setelah berhasil
+        retryCount.value = 0;
+        isRetrying.value = false;
       } else {
+        print('No text detected or text too short');
         // Jika tidak ada text yang terdeteksi, beri feedback yang lebih informatif
         Get.snackbar(
           'Tidak Ada Suara Terdeteksi',
-          'Coba berbicara lebih jelas, dekat ke mikrofon, atau periksa koneksi internet',
+          'Coba berbicara lebih jelas atau dekat ke mikrofon',
           snackPosition: SnackPosition.BOTTOM,
           duration: const Duration(seconds: 3),
           backgroundColor: Colors.orange.shade100,
@@ -313,12 +420,10 @@ class SpeechController extends GetxController {
         );
         recognizedText.value = ''; // Clear text kosong
         
-        // Coba retry jika belum mencapai max retry
-        if (retryCount.value < maxRetries.value) {
-          Future.delayed(const Duration(seconds: 2), () {
-            retrySpeechRecognition();
-          });
-        }
+        // DISABLE AUTO-RETRY - User harus klik button sendiri untuk rekam lagi
+        // Reset counter agar siap untuk percobaan berikutnya
+        retryCount.value = 0;
+        isRetrying.value = false;
       }
     } catch (e) {
       print('Error stopping listening: $e');
@@ -384,12 +489,67 @@ class SpeechController extends GetxController {
     speechMessages.add(message);
   }
 
-  void _processUserInput(String input) {
-    // Simulasi AI response (nanti bisa diganti dengan API call)
-    Timer(const Duration(seconds: 2), () {
-      String response = _generateAIResponse(input);
-      _addAIMessage(response);
-    });
+  Future<void> _processUserInput(String input) async {
+    if (input.trim().isEmpty) {
+      print('Warning: Empty input, skipping API call');
+      return;
+    }
+
+    try {
+      isLoading.value = true;
+      print('=== Processing User Input ===');
+      print('Input text: "$input"');
+      print('WebSocket enabled: ${useWebSocket.value}');
+      print('WebSocket connected: ${_wsService.isConnected}');
+      
+      // Gunakan WebSocket jika tersedia dan terhubung, otherwise gunakan HTTP
+      if (useWebSocket.value && _wsService.isConnected) {
+        print('→ Using WebSocket to send message');
+        try {
+          _wsService.sendUserTextMessage(input);
+          print('✓ Message sent via WebSocket successfully');
+          // Response akan diterima melalui stream dan di-handle di _initializeWebSocket
+          // isLoading akan di-set ke false di handler stream
+        } catch (e) {
+          print('✗ Error sending via WebSocket: $e');
+          // Fallback ke HTTP jika WebSocket gagal
+          await _sendViaHttp(input);
+        }
+      } else {
+        print('→ Using HTTP API to send message');
+        await _sendViaHttp(input);
+      }
+    } catch (e) {
+      print('✗ Error processing user input: $e');
+      print('Stack trace: ${StackTrace.current}');
+      isLoading.value = false;
+      
+      // Fallback ke response lokal jika API gagal
+      String fallbackResponse = _generateAIResponse(input);
+      _addAIMessage(fallbackResponse);
+      
+      Get.snackbar(
+        'Warning',
+        'Gagal menghubungi server. Menggunakan response lokal.',
+        snackPosition: SnackPosition.BOTTOM,
+        duration: const Duration(seconds: 2),
+        backgroundColor: Colors.orange.shade100,
+        colorText: Colors.orange.shade800,
+      );
+    }
+  }
+
+  /// Helper method untuk mengirim via HTTP API
+  Future<void> _sendViaHttp(String input) async {
+    try {
+      final aiResponse = await _apiService.getAIResponse(input);
+      print('✓ HTTP API response received: "$aiResponse"');
+      _addAIMessage(aiResponse);
+      isLoading.value = false;
+    } catch (e) {
+      print('✗ HTTP API error: $e');
+      throw e; // Re-throw untuk ditangani di _processUserInput
+    }
   }
 
   String _generateAIResponse(String input) {
@@ -513,21 +673,20 @@ class SpeechController extends GetxController {
       await startListening();
       isRetrying.value = false;
     } else {
+      // Jangan masuk ke mode simulasi - biarkan user retry manual
       Get.snackbar(
         'Speech Recognition Gagal',
-        'Telah mencoba ${maxRetries.value} kali. Menggunakan mode simulasi.',
+        'Telah mencoba beberapa kali. Silakan coba lagi.',
         snackPosition: SnackPosition.BOTTOM,
-        duration: const Duration(seconds: 2),
+        duration: const Duration(seconds: 3),
+        backgroundColor: Colors.orange.shade100,
+        colorText: Colors.orange.shade800,
       );
       retryCount.value = 0; // Reset counter
       isRetrying.value = false;
-      // Stop semua retry dan gunakan simulasi
       isListening.value = false;
       
-      // Gunakan simulasi untuk emulator
-      Future.delayed(const Duration(seconds: 1), () {
-        simulateSpeechRecognition();
-      });
+      // JANGAN gunakan simulasi otomatis - biarkan user yang memutuskan
     }
   }
 
@@ -552,42 +711,11 @@ class SpeechController extends GetxController {
 
 
   // Method untuk simulasi speech recognition di emulator
-  void simulateSpeechRecognition() {
-    Get.snackbar(
-      'Mode Simulasi',
-      'Speech recognition tidak tersedia di emulator. Menggunakan mode simulasi.',
-      snackPosition: SnackPosition.BOTTOM,
-      duration: const Duration(seconds: 2),
-      backgroundColor: Colors.blue.shade100,
-      colorText: Colors.blue.shade800,
-      icon: const Icon(Icons.sim_card, color: Colors.blue),
-    );
-    
-    // Simulasi speech recognition
-    isListening.value = true;
-    
-    // Variasi text simulasi
-    final simulationTexts = [
-      'Hello, this is a simulation',
-      'Halo, ini adalah simulasi',
-      'How are you today?',
-      'Apa kabar hari ini?',
-      'Tell me about yourself',
-      'Ceritakan tentang diri Anda',
-      'What time is it?',
-      'Jam berapa sekarang?',
-    ];
-    
-    recognizedText.value = simulationTexts[DateTime.now().millisecondsSinceEpoch % simulationTexts.length];
-    
-    Future.delayed(const Duration(seconds: 2), () {
-      isListening.value = false;
-      if (recognizedText.value.isNotEmpty) {
-        _addUserMessage(recognizedText.value);
-        _processUserInput(recognizedText.value);
-      }
-    });
-  }
+  // DISABLED - Tidak digunakan lagi untuk mencegah auto-trigger
+  // void simulateSpeechRecognition() {
+  //   // Method ini di-disable untuk mencegah auto-trigger listening
+  //   // Jika diperlukan, bisa dipanggil secara manual
+  // }
 
   // Get available languages
   List<String> getAvailableLanguages() {

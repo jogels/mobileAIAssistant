@@ -3,7 +3,8 @@ import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../controllers/speech_controller.dart';
 import '../models/speech_message.dart';
-import '../widgets/ai_avatar.dart';
+import '../widgets/ready_player_me_avatar.dart';
+import '../widgets/simple_3d_avatar.dart';
 
 class SpeechScreen extends StatefulWidget {
   const SpeechScreen({super.key});
@@ -27,7 +28,7 @@ class _SpeechScreenState extends State<SpeechScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            const AIAvatar(size: 28, isAnimating: false),
+            const Simple3DAvatar(size: 28, isAnimating: false),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -86,14 +87,62 @@ class _SpeechScreenState extends State<SpeechScreen> {
           Expanded(
             child: speechController.speechMessages.isEmpty
                 ? _buildEmptyState(context)
-                : ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.all(16),
-                    itemCount: speechController.speechMessages.length,
-                    itemBuilder: (context, index) {
-                      final message = speechController.speechMessages.reversed.toList()[index];
-                      return _buildSpeechMessageBubble(context, message);
-                    },
+                : Stack(
+                    children: [
+                      ListView.builder(
+                        reverse: true,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: speechController.speechMessages.length,
+                        itemBuilder: (context, index) {
+                          final message = speechController.speechMessages.reversed.toList()[index];
+                          return _buildSpeechMessageBubble(context, message);
+                        },
+                      ),
+                      // Loading indicator saat API dipanggil
+                      Obx(() => speechController.isLoading.value
+                          ? Positioned(
+                              bottom: 16,
+                              left: 0,
+                              right: 0,
+                              child: Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).cardColor,
+                                    borderRadius: BorderRadius.circular(20),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(
+                                            Colors.blue,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        'Mengirim ke server...',
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink()),
+                    ],
                   ),
           ),
           
@@ -173,7 +222,13 @@ class _SpeechScreenState extends State<SpeechScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const AIAvatar(size: 100, isAnimating: true),
+            ReadyPlayerMeAvatar(
+              size: 100,
+              isAnimating: true,
+              rpmApiKey: 'sk_live_idJ1TNyOuuz28VfxFSveg-jOfTFm5aYHvoWj',
+              glbUrl: 'https://models.readyplayer.me/68e0f3dd96f1fb90a498da22.glb',
+              animationName: 'Idle',
+            ),
             const SizedBox(height: 24),
             Text(
               "Percakapan Suara",
@@ -190,6 +245,7 @@ class _SpeechScreenState extends State<SpeechScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
+            
             Container(
               padding: const EdgeInsets.all(16),
               margin: const EdgeInsets.symmetric(horizontal: 32),
@@ -238,7 +294,7 @@ class _SpeechScreenState extends State<SpeechScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            AIAvatar(
+            Simple3DAvatar(
               size: 32,
               isAnimating: !isSystem && speechController.isSpeaking.value,
             ),
@@ -298,9 +354,13 @@ class _SpeechScreenState extends State<SpeechScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Obx(() => IconButton(
-                              onPressed: () => speechController.isSpeaking.value 
-                                  ? speechController.stopSpeaking() 
-                                  : speechController.speak(message.content),
+                              onPressed: () async {
+                                if (speechController.isSpeaking.value) {
+                                  await speechController.stopSpeaking();
+                                } else {
+                                  await speechController.speak(message.content);
+                                }
+                              },
                               icon: Icon(
                                 speechController.isSpeaking.value ? Icons.stop : Icons.play_arrow,
                                 size: 16,
@@ -604,11 +664,26 @@ class _SpeechScreenState extends State<SpeechScreen> {
 
   void _handleStartListening() async {
     try {
+      // Pastikan state listening sudah di-reset
+      if (speechController.isListening.value) {
+        print('Still listening from previous session, stopping first...');
+        await speechController.stopListening();
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+      
       // Reset retry count sebelum memulai
       speechController.resetRetryCount();
+      
+      // Clear recognized text
+      speechController.recognizedText.value = '';
+      
+      // Start listening
       await speechController.startListening();
     } catch (e) {
       print('Error in _handleStartListening: $e');
+      // Pastikan state di-reset jika error
+      speechController.isListening.value = false;
+      
       // Simple error handling without manual input
       Get.snackbar(
         'Error',
@@ -621,9 +696,21 @@ class _SpeechScreenState extends State<SpeechScreen> {
 
   void _handleStopListening() async {
     try {
+      // Pastikan ada sesuatu yang di-listening sebelum stop
+      if (!speechController.isListening.value) {
+        print('Not currently listening, nothing to stop');
+        return;
+      }
+      
       await speechController.stopListening();
+      
+      // Pastikan state di-reset setelah stop
+      if (speechController.isListening.value) {
+        speechController.isListening.value = false;
+      }
     } catch (e) {
       print('Error in _handleStopListening: $e');
+      // Pastikan state di-reset jika error
       speechController.isListening.value = false;
     }
   }

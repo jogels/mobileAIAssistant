@@ -2,7 +2,7 @@
 
 class ReadyPlayerMeService {
   // URL avatar Ready Player Me yang Anda berikan
-  static const String _defaultAvatarUrl = 'https://models.readyplayer.me/68e0f3dd96f1fb90a498da22.glb';
+  static const String _defaultAvatarUrl = 'https://models.readyplayer.me/6919bd4d28f4be8b0cf728e1.glb';
   
   // URL test yang lebih sederhana untuk debugging
   static const String _testAvatarUrl = 'https://rrrtwkyhqdtdondioqdc.supabase.co/storage/v1/object/public/animations/F_Standing_Idle_001.glb';

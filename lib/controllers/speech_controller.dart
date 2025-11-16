@@ -30,6 +30,11 @@ class SpeechController extends GetxController {
   var useWebSocket = true.obs; // Opsi untuk menggunakan WebSocket atau HTTP
   var isWsConnected = false.obs; // Status koneksi WebSocket
   
+  // Untuk accumulate streaming chunks dari llm_text_chunk
+  String _accumulatedResponse = '';
+  String? _currentAIMessageId; // ID pesan AI yang sedang di-build dari chunks
+  Timer? _streamingTimeoutTimer; // Timer untuk detect akhir streaming
+  
   // Audio settings
   var speechRate = 0.5.obs;
   var speechVolume = 1.0.obs;
@@ -48,6 +53,7 @@ class SpeechController extends GetxController {
   @override
   void onClose() {
     _flutterTts.stop();
+    _streamingTimeoutTimer?.cancel();
     _wsMessageSubscription?.cancel();
     _wsConnectionSubscription?.cancel();
     _wsService.dispose();
@@ -74,10 +80,71 @@ class SpeechController extends GetxController {
 
       // Listen untuk pesan dari WebSocket
       _wsMessageSubscription = _wsService.messageStream.listen((response) {
-        // Ambil payload dari response
-        final aiResponse = response.payload;
-        _addAIMessage(aiResponse);
-        isLoading.value = false;
+        // Filter: hanya proses response dengan type "llm_text_chunk"
+        if (response.type == 'llm_text_chunk') {
+          print('✅ Received llm_text_chunk response');
+          // Ambil payload dari response
+          final chunk = response.payload;
+          
+          // Accumulate chunks untuk streaming response
+          _accumulatedResponse += chunk;
+          
+          // Cancel timeout timer jika ada (masih ada chunks yang datang)
+          _streamingTimeoutTimer?.cancel();
+          
+          // Update atau buat pesan AI dengan accumulated text
+          if (_currentAIMessageId == null) {
+            // Buat pesan AI baru untuk response pertama
+            final message = SpeechMessage(
+              id: DateTime.now().millisecondsSinceEpoch.toString(),
+              content: _accumulatedResponse,
+              type: SpeechMessageType.ai,
+              timestamp: DateTime.now(),
+            );
+            _currentAIMessageId = message.id;
+            speechMessages.add(message);
+            isLoading.value = false; // Set loading false saat chunk pertama datang
+          } else {
+            // Update pesan yang sudah ada dengan accumulated text
+            final index = speechMessages.indexWhere((m) => m.id == _currentAIMessageId);
+            if (index != -1) {
+              final existingMessage = speechMessages[index];
+              speechMessages[index] = SpeechMessage(
+                id: existingMessage.id,
+                content: _accumulatedResponse,
+                type: existingMessage.type,
+                timestamp: existingMessage.timestamp,
+              );
+            }
+          }
+          
+          // Set timeout untuk detect akhir streaming (jika tidak ada signal done)
+          // Jika tidak ada chunks baru dalam 1 detik, anggap streaming selesai dan langsung speak
+          _streamingTimeoutTimer = Timer(const Duration(seconds: 1), () {
+            if (_accumulatedResponse.isNotEmpty && _currentAIMessageId != null) {
+              print('⏱️ Streaming timeout - Assuming response complete');
+              print('🔊 Speaking AI response: "$_accumulatedResponse"');
+              speak(_accumulatedResponse);
+              _accumulatedResponse = '';
+              _currentAIMessageId = null;
+            }
+          });
+        } else if (response.type == 'llm_text_done' || response.type == 'llm_response_complete' || response.type == 'done') {
+          // Response selesai, cancel timeout dan langsung speak
+          _streamingTimeoutTimer?.cancel();
+          print('✅ Received final response signal: ${response.type}');
+          if (_accumulatedResponse.isNotEmpty && _currentAIMessageId != null) {
+            // Langsung speak accumulated response setelah selesai
+            print('🔊 Speaking AI response: "$_accumulatedResponse"');
+            speak(_accumulatedResponse);
+          }
+          _accumulatedResponse = '';
+          _currentAIMessageId = null;
+          isLoading.value = false;
+        } else {
+          print('⏭️ Skipping response with type: ${response.type} (only showing llm_text_chunk)');
+          // Tidak proses response dengan type selain "llm_text_chunk"
+        }
       });
 
       // Connect ke WebSocket
@@ -496,6 +563,11 @@ class SpeechController extends GetxController {
     }
 
     try {
+      // Reset accumulated response untuk request baru
+      _streamingTimeoutTimer?.cancel(); // Cancel timeout timer jika ada
+      _accumulatedResponse = '';
+      _currentAIMessageId = null;
+      
       isLoading.value = true;
       print('=== Processing User Input ===');
       print('Input text: "$input"');
@@ -542,10 +614,33 @@ class SpeechController extends GetxController {
   /// Helper method untuk mengirim via HTTP API
   Future<void> _sendViaHttp(String input) async {
     try {
-      final aiResponse = await _apiService.getAIResponse(input);
-      print('✓ HTTP API response received: "$aiResponse"');
-      _addAIMessage(aiResponse);
-      isLoading.value = false;
+      // Menggunakan sendUserMessage untuk mendapatkan BaseResponse dengan type
+      final baseResponse = await _apiService.sendUserMessage(input);
+      
+      // Filter: hanya proses response dengan type "llm_text_chunk"
+      if (baseResponse.type == 'llm_text_chunk') {
+        print('✅ Received llm_text_chunk response from HTTP API');
+        final aiResponse = baseResponse.payload;
+        print('✓ HTTP API response received: "$aiResponse"');
+        _addAIMessage(aiResponse);
+        
+        // Langsung speak response setelah diterima
+        print('🔊 Speaking AI response from HTTP API: "$aiResponse"');
+        speak(aiResponse);
+        
+        isLoading.value = false;
+      } else {
+        print('⏭️ Skipping HTTP response with type: ${baseResponse.type} (only showing llm_text_chunk)');
+        // Tunggu response yang benar dengan type "llm_text_chunk"
+        // Jika tidak ada, set loading ke false dan beri feedback
+        isLoading.value = false;
+        Get.snackbar(
+          'Info',
+          'Menunggu response dari server...',
+          snackPosition: SnackPosition.BOTTOM,
+          duration: const Duration(seconds: 2),
+        );
+      }
     } catch (e) {
       print('✗ HTTP API error: $e');
       throw e; // Re-throw untuk ditangani di _processUserInput

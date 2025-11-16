@@ -6,6 +6,7 @@ import '../widgets/chat_message_bubble.dart';
 import '../widgets/ai_avatar.dart';
 import '../widgets/chat_sidebar.dart';
 import 'speech_screen.dart';
+import 'animation_screen.dart';
 
 class ChatScreen extends StatelessWidget {
   const ChatScreen({super.key});
@@ -46,6 +47,11 @@ class ChatScreen extends StatelessWidget {
             onPressed: () => Get.to(() => const SpeechScreen()),
             icon: const Icon(Icons.mic),
             tooltip: "Percakapan Suara",
+          ),
+          IconButton(
+            onPressed: () => Get.to(() => const AnimationScreen()),
+            icon: const Icon(Icons.animation),
+            tooltip: "Animation Screen",
           ),
           IconButton(
             onPressed: () => controller.toggleSidebar(),

@@ -116,7 +116,7 @@ class _GLBAvatarState extends State<GLBAvatar> {
 </head>
 <body>
     <model-viewer
-        src="https://models.readyplayer.me/68e0f3dd96f1fb90a498da22.glb"
+        src="https://models.readyplayer.me/6919bd4d28f4be8b0cf728e1.glb"
         alt="Ready Player Me Avatar"
         auto-rotate="${widget.isAnimating ? 'true' : 'false'}"
         camera-controls="false"

@@ -226,7 +226,7 @@ class _SpeechScreenState extends State<SpeechScreen> {
               size: 100,
               isAnimating: true,
               rpmApiKey: 'sk_live_idJ1TNyOuuz28VfxFSveg-jOfTFm5aYHvoWj',
-              glbUrl: 'https://models.readyplayer.me/68e0f3dd96f1fb90a498da22.glb',
+              glbUrl: 'https://models.readyplayer.me/6919bd4d28f4be8b0cf728e1.glb',
               animationName: 'Idle',
             ),
             const SizedBox(height: 24),

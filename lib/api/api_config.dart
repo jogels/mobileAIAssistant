@@ -5,10 +5,10 @@ class ApiConfig {
 
   /// WebSocket URL
   /// WebSocket endpoint dengan path /ws
-  static const String wsUrl = 'ws://c12c43e93230.ngrok-free.app/ws';
+  static const String wsUrl = 'ws://a95ba217a444.ngrok-free.app/ws';
   
   /// Fallback ke wss:// (secure) jika ws:// tidak tersedia
-  static const String wsUrlFallback = 'wss://c12c43e93230.ngrok-free.app/ws';
+  static const String wsUrlFallback = 'wss://a95ba217a444.ngrok-free.app/ws';
 
   /// Helper method untuk mendapatkan full URL dari endpoint
   static String getUrl(String endpoint) {

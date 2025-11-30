@@ -25,12 +25,12 @@ class ReadyPlayerMeAvatar extends StatelessWidget {
       width: size,
       height: size,
       child: OverflowBox(
-        maxWidth: size * 1.3, // 30% lebih besar untuk mencegah clipping horizontal
-        maxHeight: size * 1.8, // 80% lebih besar vertikal untuk mencegah clipping kepala dan kaki
+        maxWidth: size * 1.5, // 50% lebih besar untuk mencegah clipping horizontal
+        maxHeight: size * 2.0, // 100% lebih besar vertikal untuk mencegah clipping kepala dan kaki
         alignment: Alignment.center,
         child: SizedBox(
-          width: size * 1.3,
-          height: size * 1.8,
+          width: size * 1.5,
+          height: size * 2.0,
           child: ModelViewer(
             src: glbUrl ?? 'https://models.readyplayer.me/6919bd4d28f4be8b0cf728e1.glb',
             alt: 'Ready Player Me Avatar',
@@ -43,8 +43,10 @@ class ReadyPlayerMeAvatar extends StatelessWidget {
             disableTap: true,
             interactionPrompt: InteractionPrompt.none,
             loading: Loading.eager,
-            cameraOrbit: '0deg 75deg 2.5m', // Jarak 2.5m dan sudut 75deg untuk melihat full body tanpa terlalu dekat
-            fieldOfView: '50deg', // Field of view sedang untuk melihat lebih banyak area tanpa distorsi
+            cameraOrbit: '0deg 75deg 5m', // Jarak 5m (seimbang) untuk melihat full body dengan jelas
+            minCameraOrbit: 'auto auto 4m', // Batas minimum jarak kamera
+            maxCameraOrbit: 'auto auto 8m', // Batas maksimum jarak kamera
+            fieldOfView: '70deg', // Field of view lebih lebar untuk melihat seluruh area (kepala sampai kaki)
             backgroundColor: Colors.transparent,
           ),
         ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/speech_controller.dart';
 import '../widgets/ready_player_me_avatar.dart';
+import '../widgets/simple_3d_avatar.dart';
 
 class AnimationScreen extends StatefulWidget {
   const AnimationScreen({super.key});
@@ -32,13 +33,7 @@ class _AnimationScreenState extends State<AnimationScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            ReadyPlayerMeAvatar(
-              size: 28,
-              isAnimating: false,
-              rpmApiKey: 'sk_live_idJ1TNyOuuz28VfxFSveg-jOfTFm5aYHvoWj',
-              glbUrl: 'https://models.readyplayer.me/6919bd4d28f4be8b0cf728e1.glb',
-              animationName: 'Idle',
-            ),
+            const Simple3DAvatar(size: 28, isAnimating: false),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
